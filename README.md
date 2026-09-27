@@ -88,6 +88,10 @@ These are hosts this project does not pay for, so:
 - one request at a time per host
 - 500 ms minimum gap between requests to the same host
 - a host that answers `429` three times is dropped for the rest of the sweep
+- a `429` carrying `Retry-After` is skipped until the window the server named, taken at
+  face value rather than counting strikes. `Retry-After: 0`, a negative or non-numeric
+  value, and the HTTP-date form all fall back to the strike counter; a delay beyond an
+  hour is capped there, since a sweep is minutes long and no sweep can outlast it
 - at most 40 streams per host per sweep
 - `User-Agent` and `Referer` are sent **as the catalogue declares them** — 789 rows
   declare a user agent and 324 a referrer, and ignoring them turns working streams
@@ -117,12 +121,12 @@ src/
   playlist.ts    pure HLS parsing (master / rendition / EXT-X-MAP)
   http.ts        capped body reads, HTML and playlist detection
   plan.ts        which streams this shard sweeps
-  host-budget.ts per-host serialisation, spacing, 429 circuit breaker
+  host-budget.ts per-host serialisation, spacing, 429 circuit breaker, Retry-After
   rollup.ts      down-streak reduction and channel rollup
   streams.ts     catalogue fetch and normalisation
   probe-shard.ts one shard's entrypoint
   merge.ts       the only job that writes state and publishes
-   test/            77 tests, node:test
+   test/            83 tests, node:test
 
 ```
 

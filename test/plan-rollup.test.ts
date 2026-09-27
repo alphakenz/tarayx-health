@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { hashUnit, sha1Key, shardOf } from '../src/hash.ts';
-import { HostBudget, groupByHost } from '../src/host-budget.ts';
+import { HostBudget, parseRetryAfter, groupByHost } from '../src/host-budget.ts';
 import { planProbes } from '../src/plan.ts';
 import { reduceState, rollupChannels } from '../src/rollup.ts';
 import { normalizeCatalog, normalizeRow } from '../src/streams.ts';
@@ -361,4 +361,60 @@ test('HostBudget trips a host after repeated rate limits', () => {
   budget.noteRateLimit('a.test');
   assert.equal(budget.isTripped('a.test'), true);
   assert.equal(budget.isTripped('b.test'), false, 'trips are per host');
+});
+
+test('HostBudget takes a Retry-After cooldown at face value', () => {
+  const budget = new HostBudget({ tripAfter: 3 });
+  // One instruction from the server is worth three bare 429s: it said when to
+  // come back, so asking again this sweep is the worse neighbour.
+  budget.noteRateLimit('a.test', 120);
+  assert.equal(budget.isTripped('a.test'), true);
+});
+
+test('HostBudget releases a Retry-After cooldown once it expires', () => {
+  let now = 1_000_000;
+  const budget = new HostBudget({ tripAfter: 3, now: () => now });
+  budget.noteRateLimit('a.test', 60);
+  assert.equal(budget.isTripped('a.test'), true);
+
+  now += 59_000;
+  assert.equal(budget.isTripped('a.test'), true, 'still inside the window');
+
+  now += 2_000;
+  assert.equal(budget.isTripped('a.test'), false, 'the host asked us back');
+});
+
+test('HostBudget ignores a Retry-After it cannot use', () => {
+  // A malformed or non-positive header must not silently outvote the strike
+  // counter, which is the conservative reading.
+  for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const budget = new HostBudget({ tripAfter: 3 });
+    budget.noteRateLimit('a.test', bad);
+    budget.noteRateLimit('a.test', bad);
+    assert.equal(budget.isTripped('a.test'), false, `Retry-After ${bad} should not trip`);
+    budget.noteRateLimit('a.test', bad);
+    assert.equal(budget.isTripped('a.test'), true, `Retry-After ${bad} should still count`);
+  }
+});
+
+test('HostBudget caps an absurd Retry-After', () => {
+  // A sweep is minutes long, so a day-long cooldown skips the host regardless;
+  // the cap only stops a hostile header from outliving any possible run.
+  let now = 0;
+  const budget = new HostBudget({ tripAfter: 3, now: () => now });
+  budget.noteRateLimit('a.test', 86_400);
+  assert.equal(budget.isTripped('a.test'), true);
+  now += 60 * 60 * 1000 + 1;
+  assert.equal(budget.isTripped('a.test'), false);
+});
+
+test('parseRetryAfter only accepts a usable delta-seconds value', () => {
+  assert.equal(parseRetryAfter(30), 30_000);
+  assert.equal(parseRetryAfter(0), null);
+  assert.equal(parseRetryAfter(-1), null);
+  assert.equal(parseRetryAfter(Number.NaN), null);
+  assert.equal(parseRetryAfter(null), null);
+  assert.equal(parseRetryAfter(undefined), null);
+  // The HTTP-date form is legal but deliberately not honoured.
+  assert.equal(parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT' as unknown as number), null);
 });

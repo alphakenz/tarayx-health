@@ -119,7 +119,7 @@ async function main(): Promise<void> {
           outcome = await budget.run(host, () =>
             probeStream(row.url, headersFor(row, deps.userAgent), {
               ...deps,
-              onRateLimit: () => budget.noteRateLimit(host),
+              onRateLimit: (retryAfterSeconds) => budget.noteRateLimit(host, retryAfterSeconds),
             }),
           );
         } catch (error) {

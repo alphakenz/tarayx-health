@@ -27,7 +27,8 @@ export type ProbeDeps = {
   maxSegmentAttempts: number;
   userAgent: string;
   /** Invoked when any request in the ladder drew a `429`. */
-  onRateLimit?: () => void;
+  /** Receives a `Retry-After` delay in seconds when the server sent one. */
+  onRateLimit?: (retryAfterSeconds?: number) => void;
 };
 
 export type Outcome = {
@@ -160,7 +161,14 @@ async function timedFetch(
  */
 function noteRateLimit(response: Response, deps: ProbeDeps): void {
   if (response.status === 429) {
-    deps.onRateLimit?.();
+    // `Retry-After` is the one instruction a rate-limiting server actually gives,
+    // so it is passed through to be taken at its word. Absent or unparseable, the
+    // budget falls back to counting strikes.
+    const header = response.headers.get('retry-after');
+    const seconds = header === null ? null : Number(header);
+    deps.onRateLimit?.(
+      seconds !== null && Number.isFinite(seconds) ? seconds : undefined,
+    );
   }
 }
 
