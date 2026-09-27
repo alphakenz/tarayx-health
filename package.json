@@ -1,0 +1,20 @@
+{
+  "name": "tarayx-health",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Probes the iptv-org stream list and publishes a per-channel availability feed for Tarayx TV.",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "probe": "node src/probe-shard.ts",
+    "merge": "node src/merge.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "typescript": "~6.0.3"
+  }
+}

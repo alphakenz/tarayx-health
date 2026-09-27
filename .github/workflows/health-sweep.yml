@@ -1,0 +1,123 @@
+name: health-sweep
+
+# Every two hours, offset to an odd minute so this does not pile onto the same
+# moment as every other cron job on the platform.
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A sweep must not overlap itself: each run reads the *published* state, so two
+# concurrent runs would both branch from the same snapshot and the second
+# publish would discard the first run's down streaks. Queuing is safer than
+# cancelling here, because a cancelled run publishes nothing at all.
+concurrency:
+  group: health-sweep
+  cancel-in-progress: false
+
+env:
+  SHARD_COUNT: '4'
+  MIN_DOWN_STREAK: '2'
+  UP_FRESH_MS: '21600000'
+  UP_SAMPLE_PERCENT: '20'
+  REQUEST_TIMEOUT_MS: '10000'
+  MIN_SPACING_MS: '500'
+  REGION: us
+
+jobs:
+  probe:
+    name: probe shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Probe shard
+        env:
+          SHARD: ${{ matrix.shard }}
+          MAX_PROBES: '14000'
+        run: node src/probe-shard.ts
+
+      - name: Upload shard records
+        uses: actions/upload-artifact@v4
+        with:
+          name: records-${{ matrix.shard }}
+          path: out/records-${{ matrix.shard }}.json
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    name: merge and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: probe
+    env:
+      # Read the streaks back out of the published feed. The run id is a
+      # cache-busting query: Pages sits behind a CDN, and a stale copy of the state
+      # would silently rewind every streak back to zero and re-probe everything.
+      # A 404 here is expected before the first publish and starts from empty.
+      STATE_URL: https://alphakenz.github.io/tarayx-health/health-state.json?run=${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          pattern: records-*
+          merge-multiple: true
+
+      - name: Reduce state and build the feed
+        run: node src/merge.ts
+
+      - name: Sanity-check the feed before deploying
+        run: |
+          node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            const feed = JSON.parse(await readFile("public/health.json", "utf8"));
+            const channels = Object.values(feed.channels);
+            const dead = channels.filter((c) => c.state === "dead").length;
+            console.log(`channels ${channels.length}, dead ${dead}`);
+            if (channels.length === 0) throw new Error("feed has no channels");
+            // A guard against a bad sweep retiring a large share of the catalogue.
+            if (dead / channels.length > 0.5) {
+              throw new Error(`refusing to publish: ${dead}/${channels.length} dead`);
+            }
+          '
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    name: deploy to pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: merge
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
