@@ -184,7 +184,18 @@ async function getBody(
   if (status) {
     return { ok: false, failure: status };
   }
-  const bytes = await readCapped(result.response, cap);
+  let bytes: Uint8Array;
+  try {
+    bytes = await readCapped(result.response, cap);
+  } catch (error) {
+    // The request timeout stays armed once headers arrive, so it can fire part way
+    // through the body — and a live HLS segment, which never ends, is exactly the
+    // case that reaches the cap by timing out rather than by finishing. Left
+    // uncaught that rejection escapes the ladder and takes the whole shard down
+    // with it, so the sweep loses thousands of completed probes over one stream.
+    // A body that stops mid-read is a transport failure, never evidence of death.
+    return { ok: false, failure: classifyTransportError(error) };
+  }
   return {
     ok: true,
     bytes,

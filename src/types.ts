@@ -38,7 +38,12 @@ export type ProbeReason =
   | 'segment_not_media'
   | 'unsupported_scheme'
   | 'shard_excluded'
-  | 'host_skipped';
+  | 'host_skipped'
+  /**
+   * The prober itself misbehaved on this stream. Never a verdict about the
+   * stream: it hides nothing, and a down streak is never advanced by it.
+   */
+  | 'internal';
 
 /** A single probe outcome, keyed by URL hash so state stays small on disk. */
 export type ProbeRecord = {

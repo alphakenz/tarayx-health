@@ -131,6 +131,39 @@ test('a live stream is only down when every candidate segment is gone', async ()
   assert.equal(outcome.reason, 'segment_failed');
 });
 
+test('a body that is aborted mid-read is blocked, not a crash', { timeout: 10_000 }, async () => {
+  // This is the shape of the bug that killed three of four shards in the first
+  // real sweep: the request timeout is still armed once headers arrive, so a body
+  // that never ends (a live segment) hits it while being read. If that rejection
+  // escapes the ladder, Node tears down the whole process and every probe already
+  // recorded in that shard is lost.
+  const playlist = ['#EXTM3U', '#EXTINF:8.0,', 'a.ts'].join('\n');
+  const impl: typeof fetch = (async (url: string | URL, init?: RequestInit) => {
+    if (!String(url).endsWith('.m3u8')) {
+      // Headers arrive fine; the body then stalls forever, the way a live segment
+      // does, and the still-armed request timeout aborts it mid-read.
+      const signal = init?.signal;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0x47, 0x40, 0x00, 0x10]));
+          signal?.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': MEDIA, 'content-length': '999999' },
+      });
+    }
+    return new Response(playlist, { status: 200, headers: { 'content-type': PLAYLIST } });
+  }) as unknown as typeof fetch;
+
+  const shortTimeout = deps(impl, { requestTimeoutMs: 40 });
+  const outcome = await probeStream('https://x.test/live.m3u8', {}, shortTimeout);
+  assert.notEqual(outcome.state, 'up', 'a truncated body is not proof of media');
+  assert.equal(outcome.state, 'blocked');
+  assert.equal(outcome.reason, 'timeout');
+});
+
 test('a refusal on one segment stops the walk', async () => {
   const segments = ['a.ts', 'b.ts', 'c.ts'];
   const playlist = ['#EXTM3U', ...segments.flatMap((name) => ['#EXTINF:8.0,', name])].join('\n');

@@ -3,7 +3,7 @@ import { HostBudget } from './host-budget.ts';
 import { loadState, outDir, settings, writeJson } from './io.ts';
 import { planProbes } from './plan.ts';
 import { probeStream } from './probe.ts';
-import type { ProbeDeps } from './probe.ts';
+import type { Outcome, ProbeDeps } from './probe.ts';
 import { fetchCatalog } from './streams.ts';
 import type { ProbeRecord, ProbeState, StreamRow } from './types.ts';
 
@@ -32,6 +32,22 @@ function headersFor(row: StreamRow, userAgent: string): Record<string, string> {
 }
 
 type Tally = Record<ProbeState, number>;
+
+/**
+ * A sweep is several thousand probes accumulated over minutes of wall time, and
+ * records are only written at the end. Node's default is to treat an unhandled
+ * rejection as fatal, which means one stray rejection discards every probe the
+ * shard has already completed. The first real sweep lost three of four shards
+ * exactly this way, to a body that aborted mid-read.
+ *
+ * This logs loudly and keeps going rather than exiting. It is not a way to hide a
+ * defect: a probe that throws is recorded as `internal` (see below), which hides
+ * nothing and never advances a down streak, so a broken build shows up in the
+ * published feed instead of quietly looking healthy.
+ */
+process.on('unhandledRejection', (reason) => {
+  process.stderr.write(`unhandled rejection, continuing: ${String(reason)}\n`);
+});
 
 async function main(): Promise<void> {
   const budget = new HostBudget({ minSpacingMs: settings.minSpacingMs });
@@ -93,12 +109,23 @@ async function main(): Promise<void> {
           tally.skipped += 1;
           continue;
         }
-        const outcome = await budget.run(host, () =>
-          probeStream(row.url, headersFor(row, deps.userAgent), {
-            ...deps,
-            onRateLimit: () => budget.noteRateLimit(host),
-          }),
-        );
+        // A sweep is measured in hours of accumulated evidence, so a single stream
+        // throwing must never discard the probes already recorded. Anything that
+        // escapes the ladder is a defect in the prober rather than a fact about
+        // the stream, and the safe way to record a defect is `blocked`: it hides
+        // nothing, and it is not a down streak.
+        let outcome: Outcome;
+        try {
+          outcome = await budget.run(host, () =>
+            probeStream(row.url, headersFor(row, deps.userAgent), {
+              ...deps,
+              onRateLimit: () => budget.noteRateLimit(host),
+            }),
+          );
+        } catch (error) {
+          process.stderr.write(`probe failed unexpectedly: ${String(error)}\n`);
+          outcome = { state: 'blocked', reason: 'internal', ms: null };
+        }
         tally[outcome.state] += 1;
         records.push({
           k: key,
