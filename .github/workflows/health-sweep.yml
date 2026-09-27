@@ -28,10 +28,29 @@ env:
   REGION: us
 
 jobs:
+  verify:
+    name: typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
   probe:
     name: probe shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: verify
     strategy:
       fail-fast: false
       max-parallel: 4
