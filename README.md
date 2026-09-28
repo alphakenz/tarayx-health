@@ -171,3 +171,32 @@ is CDN-backed and a cached copy of the state would silently rewind every streak.
 
 The app fetches that URL at a **lowest** download priority, so it never competes
 with the 3.65 MB `streams.json` the catalogue is actually built from.
+
+### This repository has to stay public
+
+The feed is only served while Pages is enabled, and Pages is not available for a
+private repository on a free plan. Making this repository private does not fail
+loudly: the next publish dies at `configure-pages` with `Create Pages site failed`
+or, if the site already existed, silently stops being reachable. Because the app
+fails open on an absent feed, **no user sees an error and no test fails** — everyone
+just gets the full catalogue with dead channels no longer hidden. That is how the
+feed went missing for hours before it was noticed.
+
+The sweep sets `enablement: true` so it can recreate a site that is merely
+missing, but it cannot create the first one: that needs a user token, not
+`GITHUB_TOKEN`. If Pages is ever withdrawn, re-enable it once at
+**Settings → Pages → Source: GitHub Actions**.
+
+To check the feed is actually being served, rather than trusting a green run:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  https://alphakenz.github.io/tarayx-health/health.json
+```
+
+The app side carries a matching check that runs the real parser against the real
+document, opt-in because it needs the network:
+
+```sh
+TARAYX_HEALTH_LIVE=1 npx jest src/lib/__tests__/health-contract-test.ts
+```
