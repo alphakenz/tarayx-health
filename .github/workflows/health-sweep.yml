@@ -82,6 +82,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: probe
+    permissions:
+      # configure-pages needs these to *create* the site, not just to upload an
+      # artifact to one that already exists. Without them the enablement step
+      # below fails with "Resource not accessible by integration".
+      pages: write
+      id-token: write
     env:
       # Read the streaks back out of the published feed. The run id is a
       # cache-busting query: Pages sits behind a CDN, and a stale copy of the state
@@ -120,6 +126,13 @@ jobs:
           '
 
       - uses: actions/configure-pages@v5
+        with:
+          # Self-healing on purpose. A missing feed is indistinguishable from a
+          # healthy one at the app: `fetchHealth` fails open, so a 404 leaves every
+          # user seeing a complete catalogue and nothing anywhere reports a fault.
+          # The site was found disabled with the previous publish still green, so
+          # the pipeline recreates it rather than failing and going quietly inert.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
