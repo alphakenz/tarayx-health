@@ -83,6 +83,10 @@ jobs:
     timeout-minutes: 15
     needs: probe
     permissions:
+      # Job-level permissions replace the workflow-level block wholesale rather
+      # than adding to it, so `contents: read` has to be restated here or the
+      # checkout above has no token and fails with "repository not found".
+      contents: read
       # configure-pages needs these to *create* the site, not just to upload an
       # artifact to one that already exists. Without them the enablement step
       # below fails with "Resource not accessible by integration".
