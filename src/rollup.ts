@@ -77,36 +77,41 @@ function verdictFor(state: StreamState, minDownStreak: number): ChannelHealth['s
  * Collapses stream verdicts into the per-channel verdicts the app consumes.
  *
  * A channel is `dead` only when every one of its streams is a *convinced* dead:
- * if even one stream is blocked, still fresh, or merely one sweep into a down
- * streak, the channel is `unknown`, and the app fails open and shows it. 7% of
- * the catalogue is geo-restricted, and collapsing those into "dead" is the single
- * worst mistake this feed could make.
+ * if even one stream is unprobed, blocked, still fresh, or merely one sweep into
+ * a down streak, the channel is `unknown`, and the app fails open and shows it.
+ * 7% of the catalogue is geo-restricted, and collapsing those into "dead" is the
+ * single worst mistake this feed could make.
  */
 export function rollupChannels(
   streams: readonly StreamRow[],
   state: StateFile,
   minDownStreak: number,
 ): Record<string, ChannelHealth> {
-  const byChannel = new Map<string, StreamState[]>();
+  const byChannel = new Map<string, { total: number; entries: StreamState[] }>();
 
   for (const row of streams) {
     if (row.channel === null) {
       continue;
     }
-    const entry = state.streams[sha1Key(row.url)];
-    if (entry === undefined) {
-      continue;
+    let channel = byChannel.get(row.channel);
+    if (!channel) {
+      channel = { total: 0, entries: [] };
+      byChannel.set(row.channel, channel);
     }
-    const existing = byChannel.get(row.channel);
-    if (existing) {
-      existing.push(entry);
-    } else {
-      byChannel.set(row.channel, [entry]);
+    channel.total += 1;
+
+    const entry = state.streams[sha1Key(row.url)];
+    if (entry !== undefined) {
+      channel.entries.push(entry);
     }
   }
 
   const channels: Record<string, ChannelHealth> = {};
-  for (const [id, entries] of byChannel) {
+  for (const [id, { total, entries }] of byChannel) {
+    if (entries.length === 0) {
+      continue;
+    }
+
     let up = 0;
     let dead = 0;
     let restricted = false;
@@ -122,7 +127,6 @@ export function rollupChannels(
       }
     }
 
-    const total = entries.length;
     let channelState: ChannelHealth['state'];
     if (up > 0) {
       channelState = 'online';
