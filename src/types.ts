@@ -81,6 +81,7 @@ export type StreamState = {
 export type ChannelHealth = {
   state: 'online' | 'dead' | 'unknown';
   up: number;
+  /** How many distinct streams this channel has in the current catalogue. */
   total: number;
   /** At least one stream failed in a way that says nothing about liveness. */
   restricted: boolean;

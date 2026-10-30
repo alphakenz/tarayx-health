@@ -261,6 +261,22 @@ test('a channel is dead only when every stream has a full down streak', () => {
   assert.equal(rollupChannels(rows, twoSweeps, 2).ch1?.state, 'dead');
 });
 
+test('a channel with an unprobed stream stays unknown', () => {
+  const rows = [row('https://a.test/1.m3u8'), row('https://b.test/1.m3u8')];
+  const state: StateFile = {
+    version: 1,
+    streams: {
+      [sha1Key(rows[0]!.url)]: { s: 'd', d: 9, a: NOW },
+    },
+  };
+
+  const health = rollupChannels(rows, state, 2).ch1;
+  assert.equal(health?.state, 'unknown');
+  assert.equal(health?.up, 0);
+  assert.equal(health?.total, 2);
+  assert.equal(health?.restricted, false);
+});
+
 test('a single blocked stream keeps a channel visible', () => {
   // The 7% geo-restricted case: hiding these is the worst mistake this feed could make.
   const rows = [row('https://a.test/1.m3u8'), row('https://b.test/1.m3u8')];
